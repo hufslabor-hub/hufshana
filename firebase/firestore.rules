@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 헬퍼 함수
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // users 문서의 role이 admin인지 확인
+    function isAdmin() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // ========== users 컬렉션 ==========
+    match /users/{userId} {
+      // 본인 또는 관리자만 읽기
+      allow read: if isOwner(userId) || isAdmin();
+
+      // 본인만 생성 (첫 로그인 시)
+      allow create: if isAuthenticated()
+                    && request.auth.uid == userId
+                    && request.resource.data.uid == userId
+                    && request.resource.data.role in ['user', 'admin'];
+
+      // 본인은 프로필 필드만 수정 가능 (role 변경 불가)
+      // 관리자는 모든 필드 수정 가능 (role 포함)
+      allow update: if isAdmin()
+                    || (isOwner(userId)
+                        && request.resource.data.role == resource.data.role);
+
+      // 삭제: 관리자만
+      allow delete: if isAdmin();
+    }
+
+    // ========== conditions 컬렉션 ==========
+    match /conditions/{conditionId} {
+      // 로그인한 사용자는 읽기 가능
+      allow read: if isAuthenticated();
+
+      // 관리자만 생성/수정/삭제
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ========== analyses 컬렉션 ==========
+    match /analyses/{analysisId} {
+      // 본인 문서 또는 관리자만 읽기
+      allow read: if isAuthenticated()
+                  && (resource.data.userId == request.auth.uid || isAdmin());
+
+      // 본인만 생성 (userId가 본인 UID와 일치해야 함)
+      allow create: if isAuthenticated()
+                    && request.resource.data.userId == request.auth.uid;
+
+      // 본인 또는 관리자만 수정
+      allow update: if isAuthenticated()
+                    && (resource.data.userId == request.auth.uid || isAdmin());
+
+      // 삭제: 관리자만
+      allow delete: if isAdmin();
+    }
+  }
+}
