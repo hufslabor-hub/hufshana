@@ -19,7 +19,7 @@ export default function Navbar() {
         <div className="flex justify-between h-14 items-center">
           <div className="flex items-center gap-6">
             <Link href="/" className="text-lg font-bold text-primary-700">
-              Insta AI Advisor
+              HUFS HANA Insta AI Advisor
             </Link>
 
             {user && (
