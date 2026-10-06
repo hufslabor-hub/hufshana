@@ -28,8 +28,13 @@ function AnalyzeContent() {
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">인스타 피드 분석</h1>
         <p className="text-gray-500 mt-1">
-          피드를 붙여넣으면 사전에 정의된 조건에 따라 AI가 조언을 해줍니다.
+          게시물 링크와 캡션을 넣으면 조건에 맞춰 AI가 조언합니다.
         </p>
+        <div className="mt-3 p-3 bg-blue-50 text-blue-800 text-sm rounded-lg">
+          💡 <strong>팁:</strong> 인스타에서 게시물 → 공유 → 링크 복사 후 붙여넣고,
+          캡션/해시태그도 함께 복사해 넣으면 분석이 더 정확해집니다.
+          (인스타 정책상 링크만으로는 본문을 자동으로 가져오기 어렵습니다.)
+        </div>
       </div>
 
       {!result ? (

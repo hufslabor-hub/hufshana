@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
-import { runAnalysis } from "@/lib/gemini/analyze";
+import { runAnalysis, type ImageInput } from "@/lib/gemini/analyze";
 import type { Condition } from "@/types";
+
+export const maxDuration = 60; // 이미지 분석은 시간이 더 걸릴 수 있음
 
 export async function POST(req: NextRequest) {
   try {
-    // 1. Authorization 헤더에서 ID 토큰 검증
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return NextResponse.json({ error: "인증이 필요합니다." }, { status: 401 });
@@ -20,23 +21,33 @@ export async function POST(req: NextRequest) {
     }
 
     const userId = decoded.uid;
-
-    // 2. 요청 바디
     const body = await req.json();
-    const { text, imageUrls = [], conditionIds } = body as {
+    const {
+      text,
+      images = [],
+      instagramUrl,
+    } = body as {
       text: string;
-      imageUrls?: string[];
-      conditionIds?: string[];
+      images?: ImageInput[];
+      instagramUrl?: string;
     };
 
-    if (!text || typeof text !== "string" || text.trim().length < 5) {
+    if ((!text || text.trim().length < 3) && (!images || images.length === 0)) {
       return NextResponse.json(
-        { error: "피드 내용을 최소 5자 이상 입력해주세요." },
+        { error: "텍스트 또는 이미지를 입력해주세요." },
         { status: 400 }
       );
     }
 
-    // 3. 활성 조건 조회 (index 없이 안전하게)
+    // 이미지 개수/크기 제한
+    if (images && images.length > 5) {
+      return NextResponse.json(
+        { error: "이미지는 최대 5장까지 가능합니다." },
+        { status: 400 }
+      );
+    }
+
+    // 활성 조건 조회
     const conditionsSnap = await adminDb
       .collection("conditions")
       .where("isActive", "==", true)
@@ -58,13 +69,7 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    // order 기준 정렬
     conditions.sort((a, b) => a.order - b.order);
-
-    // 특정 조건만 선택했다면 필터
-    if (conditionIds && conditionIds.length > 0) {
-      conditions = conditions.filter((c) => conditionIds.includes(c.id));
-    }
 
     if (conditions.length === 0) {
       return NextResponse.json(
@@ -73,11 +78,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. pending 상태로 분석 문서 생성
+    const contentText =
+      (text || "").trim() ||
+      (instagramUrl
+        ? `[인스타그램 링크] ${instagramUrl}`
+        : "(이미지 기반 분석)");
+
+    // pending 문서 생성
     const analysisRef = await adminDb.collection("analyses").add({
       userId,
-      originalText: text.trim(),
-      imageUrls: imageUrls || [],
+      originalText: contentText,
+      imageUrls: [], // base64는 저장하지 않음 (용량)
+      imageCount: images?.length || 0,
       appliedConditionIds: conditions.map((c) => c.id),
       aiResponse: "",
       status: "pending",
@@ -85,9 +97,8 @@ export async function POST(req: NextRequest) {
       updatedAt: new Date(),
     });
 
-    // 5. Gemini 호출
     try {
-      const result = await runAnalysis(text.trim(), conditions, imageUrls);
+      const result = await runAnalysis(contentText, conditions, images || []);
 
       await analysisRef.update({
         aiResponse: result.fullResponse,

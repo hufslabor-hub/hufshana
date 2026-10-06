@@ -9,13 +9,19 @@ export interface AnalyzeResult {
   copyrightNotes?: string;
 }
 
+/** base64 이미지 (data URL 또는 pure base64) */
+export interface ImageInput {
+  base64: string; // data:image/jpeg;base64,... 또는 pure base64
+  mimeType: string; // image/jpeg, image/png, image/webp
+}
+
 /**
- * 활성 조건들을 기반으로 Gemini에 분석 요청
+ * 활성 조건들을 기반으로 Gemini에 분석 요청 (텍스트 + 이미지)
  */
 export async function runAnalysis(
   content: string,
   conditions: Condition[],
-  imageUrls: string[] = []
+  images: ImageInput[] = []
 ): Promise<AnalyzeResult> {
   if (!process.env.GEMINI_API_KEY) {
     throw new Error("GEMINI_API_KEY가 설정되지 않았습니다.");
@@ -25,7 +31,6 @@ export async function runAnalysis(
     throw new Error("적용할 활성 조건이 없습니다. 관리자에게 문의하세요.");
   }
 
-  // 조건별 프롬프트 조립
   const conditionBlocks = conditions
     .map((c, i) => {
       const prompt = c.promptTemplate.replace(/\{\{content\}\}/g, content);
@@ -34,17 +39,18 @@ export async function runAnalysis(
     .join("\n\n---\n\n");
 
   const systemInstruction = `당신은 인스타그램 피드 콘텐츠를 전문적으로 분석하는 AI 어드바이저입니다.
-주어진 조건에 따라 피드를 분석하고, 구체적이고 실행 가능한 조언을 한국어로 제공하세요.
+주어진 텍스트와 이미지를 함께 보고, 조건에 따라 구체적이고 실행 가능한 조언을 한국어로 제공하세요.
+이미지가 있으면 이미지 내용(피사체, 구도, 텍스트, 워터마크, 브랜드 로고, 유명 캐릭터/작품 유사성 등)을 반드시 반영하세요.
 각 조건에 대해 명확히 구분하여 답변하세요.`;
 
   const fullPrompt = `${systemInstruction}
 
-아래 인스타그램 피드 원문:
+아래 인스타그램 피드 정보:
 """
 ${content}
 """
 
-${imageUrls.length > 0 ? `(참고: ${imageUrls.length}개의 이미지가 함께 제공되었습니다.)` : ""}
+${images.length > 0 ? `(첨부 이미지 ${images.length}장을 함께 분석해주세요.)` : ""}
 
 아래 조건들에 따라 분석해주세요:
 
@@ -54,26 +60,35 @@ ${conditionBlocks}
 전체 응답은 마크다운 형식으로 정리해주세요.`;
 
   const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+    model: "gemini-3.5-flash-lite",
   });
 
-  // 이미지가 있으면 multimodal 요청
-  let result;
-  if (imageUrls.length > 0) {
-    // 이미지를 base64 또는 URL로 전달 (Gemini는 URL 직접 지원이 제한적이므로
-    // 여기서는 텍스트 중심으로 처리. 필요시 Storage에서 base64 변환 가능)
-    const parts: any[] = [{ text: fullPrompt }];
-    // 간단한 구현: 이미지 URL을 프롬프트에 포함
-    // 실제 비전 분석을 원하면 fetch → base64 변환 후 inlineData로 전달
-    result = await model.generateContent(parts);
-  } else {
-    result = await model.generateContent(fullPrompt);
+  // multimodal parts
+  const parts: any[] = [];
+
+  for (const img of images) {
+    let data = img.base64;
+    // data URL이면 pure base64만 추출
+    if (data.startsWith("data:")) {
+      const match = data.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        data = match[2];
+      }
+    }
+    parts.push({
+      inlineData: {
+        mimeType: img.mimeType || "image/jpeg",
+        data,
+      },
+    });
   }
 
+  parts.push({ text: fullPrompt });
+
+  const result = await model.generateContent({ contents: [{ role: "user", parts }] });
   const response = await result.response;
   const fullResponse = response.text();
 
-  // 저작권 조건이 있으면 점수 추출 시도
   let copyrightRiskScore: number | undefined;
   let copyrightNotes: string | undefined;
 
@@ -83,7 +98,6 @@ ${conditionBlocks}
     if (scoreMatch) {
       copyrightRiskScore = Math.min(100, Math.max(0, parseInt(scoreMatch[1], 10)));
     }
-    // 간단한 노트 추출
     const noteMatch = fullResponse.match(/판단 근거[:\s]*(.+?)(?=\n|$)/);
     if (noteMatch) {
       copyrightNotes = noteMatch[1].trim();

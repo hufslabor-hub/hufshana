@@ -9,7 +9,7 @@ export default function HomePage() {
   return (
     <main className="flex min-h-[80vh] flex-col items-center justify-center p-8">
       <h1 className="text-4xl sm:text-5xl font-bold mb-4 text-center">
-        Insta AI Advisor
+        HUFS HANA Insta AI Advisor
       </h1>
       <p className="text-lg text-gray-600 mb-10 text-center max-w-md">
         인스타그램 피드를 붙여넣으면 AI가 조건에 맞춰 조언을 해줍니다.
